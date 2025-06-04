@@ -2,6 +2,7 @@
 
 const { supabase, supabaseCrmSettings } = require('../utils'); // Removed formatDate from utils
 const { startOfWeek, endOfWeek, eachDayOfInterval, format, formatISO } = require('date-fns'); // Added formatISO if needed elsewhere, format for yyyy-MM-dd
+const moment = require('moment-timezone'); // For timezone conversion
 
 /**
  * Get the current week's dates (Monday to Sunday)
@@ -75,17 +76,68 @@ const getDayName = (date) => {
  * @param {Object} res - Express response object
  * @returns {Object} - Availability slots for the user
  */
+/**
+ * Get company default timezone
+ * @returns {string} Default timezone (e.g., 'America/New_York')
+ */
+const getCompanyDefaultTimezone = async () => {
+  try {
+    const { data, error } = await supabaseCrmSettings
+      .from('Company_Settings')
+      .select('Default_Time_Zone')
+      .eq('Name', 'Default')
+      .single();
+
+    if (error) {
+      console.error('Error fetching company settings:', error);
+      return 'UTC'; // Default fallback
+    }
+
+    return data?.Default_Time_Zone || 'UTC';
+  } catch (err) {
+    console.error('Error in getCompanyDefaultTimezone:', err);
+    return 'UTC'; // Default fallback
+  }
+};
+
+/**
+ * Convert UTC date to company timezone
+ * @param {Date} utcDate - Date in UTC
+ * @param {string} timezone - Target timezone
+ * @returns {Date} Date in company timezone
+ */
+/**
+ * Convert UTC date to company timezone
+ * @param {Date} utcDate - Date in UTC
+ * @param {string} timezone - Target timezone (e.g., 'America/New_York')
+ * @returns {Date} Date in company timezone
+ */
+const convertUTCToTimezone = (utcDate, timezone) => {
+  // Create a moment object from the UTC date
+  const utcMoment = moment.utc(utcDate);
+  
+  // Convert to the target timezone
+  const timezoneMoment = utcMoment.clone().tz(timezone);
+  
+  // Return as a JavaScript Date object
+  return timezoneMoment.toDate();
+};
+
 const getUserAppointmentsAvailabilitySlots = async (req, res) => {
   try {
+    // Fetch company settings to get default timezone
+    const defaultTimezone = await getCompanyDefaultTimezone();
+    console.log(`Using company default timezone: ${defaultTimezone}`);
+    
     // Get sales rep users
     const users = await getSalesRepsUsers();
     
     // Get their availability settings
-    const usersAppointmentsAvailability = await getSalesRepsUsersAppointmentsAvailability(users); 
+    const usersAppointmentsAvailability = await getSalesRepsUsersAppointmentsAvailability(users);
     
     // Get existing appointments
     const appointments = await getAppointments(users);
-    
+    console.log('appointments',appointments);
     // Get current week dates
     const weekDates = getCurrentWeekDates();
     
@@ -94,11 +146,12 @@ const getUserAppointmentsAvailabilitySlots = async (req, res) => {
       users,
       usersAppointmentsAvailability,
       appointments,
-      weekDates
+      weekDates,
+      defaultTimezone
     );
 
     // Format the response as an array
-    const formattedResponse = formatResponseAsArray(processedAvailabilitySlots);
+    const formattedResponse = formatResponseAsArray(processedAvailabilitySlots, defaultTimezone);
 
     return res.status(200).json({
       success: true,
@@ -123,7 +176,7 @@ const getUserAppointmentsAvailabilitySlots = async (req, res) => {
  * @param {Array} weekDates - Current week dates
  * @returns {Array} Processed availability slots
  */
-const processAvailabilitySlots = (users, usersAvailability, appointments, weekDates) => {
+const processAvailabilitySlots = (users, usersAvailability, appointments, weekDates, timezone) => {
   const result = [];
   
   // Process each user
@@ -182,8 +235,8 @@ const processAvailabilitySlots = (users, usersAvailability, appointments, weekDa
       
       console.log(`Found availability for ${dayName}:`, dayAvailability);
       
-      // Generate expanded slots (1 hour before and after)
-      const expandedSlots = generateExpandedSlots(dayAvailability.slots, date);
+      // Generate expanded slots (1 hour before and after) with timezone conversion
+      const expandedSlots = generateExpandedSlots(dayAvailability.slots, date, timezone);
       
       // Count appointments for this day
       const dayAppointments = userAppointments.filter(appointment => {
@@ -204,7 +257,18 @@ const processAvailabilitySlots = (users, usersAvailability, appointments, weekDa
           // Let's compare the UTC date part of `date` with `appointmentDateStr`.
           const currentDateUTCDateStr = formatISO(date, { representation: 'date' });
 
+          // Check if this is a multi-day appointment
+          if (appointment.End_Time) {
+            const appointmentEndDateStr = appointment.End_Time.split('T')[0];
+            
+            // If the current date is between start and end dates (inclusive), it's a match
+            if (currentDateUTCDateStr >= appointmentDateStr && currentDateUTCDateStr <= appointmentEndDateStr) {
+              console.log(`Found multi-day appointment spanning from ${appointmentDateStr} to ${appointmentEndDateStr} that includes ${currentDateUTCDateStr} for user ${user.Id}`);
+              return true;
+            }
+          }
 
+          // For single-day appointments or if not within multi-day range
           const isSameDay = appointmentDateStr === currentDateUTCDateStr;
           
           if (isSameDay) {
@@ -228,7 +292,7 @@ const processAvailabilitySlots = (users, usersAvailability, appointments, weekDa
       }
       
       // Filter out slots that conflict with appointments
-      const availableSlots = filterConflictingSlots(expandedSlots, dayAppointments);
+      const availableSlots = filterConflictingSlots(expandedSlots, dayAppointments, timezone);
       
       if (availableSlots.length > 0) {
         // Add to result
@@ -273,7 +337,7 @@ const processAvailabilitySlots = (users, usersAvailability, appointments, weekDa
  * @param {Date} date - Date object
  * @returns {Array} Expanded slots as Date objects
  */
-const generateExpandedSlots = (baseSlots, date) => {
+const generateExpandedSlots = (baseSlots, date, timezone) => {
   const expandedSlots = [];
   
   baseSlots.forEach(timeStr => {
@@ -291,7 +355,7 @@ const generateExpandedSlots = (baseSlots, date) => {
       
       console.log(`Processing time slot: ${normalizedTimeStr} for date ${date.toISOString()}`);
       
-      // Convert time string to Date
+      // Convert time string to Date (keeping original timezone)
       const baseTime = timeStringToDate(normalizedTimeStr, date);
       
       // Add base time
@@ -321,7 +385,7 @@ const generateExpandedSlots = (baseSlots, date) => {
  * @param {Array} appointments - Appointments for the day
  * @returns {Array} Filtered slots
  */
-const filterConflictingSlots = (slots, appointments) => {
+const filterConflictingSlots = (slots, appointments, timezone) => {
   if (appointments.length === 0) {
     return slots; // No conflicts if no appointments
   }
@@ -334,7 +398,7 @@ const filterConflictingSlots = (slots, appointments) => {
   }))));
   
   return slots.filter(slot => {
-    // Get the hour from the slot
+    // Get the hour from the slot (keep in original timezone)
     const slotHour = slot.getHours();
     const slotMinutes = slot.getMinutes();
     
@@ -348,32 +412,141 @@ const filterConflictingSlots = (slots, appointments) => {
           return false;
         }
         
-        // Parse the appointment time and adjust for time zone
-        const appointmentTimeStr = appointment.Scheduled_Time;
-        console.log(`Raw appointment time: ${appointmentTimeStr}`);
+        // Get the current date being processed (the date of the slot)
+        const slotDate = new Date(slot);
+        const slotDateOnly = moment(slotDate).format('YYYY-MM-DD');
         
-        // Extract the hour from the ISO string directly
-        // Format is typically: "2025-05-12T15:00:00+00:00"
-        const timeMatch = appointmentTimeStr.match(/T(\d{2}):(\d{2})/);
+        // Parse the appointment start time and convert from UTC to company timezone
+        const appointmentStartTimeStr = appointment.Scheduled_Time;
+        console.log(`Raw appointment start time (UTC): ${appointmentStartTimeStr}`);
         
-        if (!timeMatch) {
-          console.error(`Could not parse time from ${appointmentTimeStr}`);
+        // Convert UTC appointment start time to company timezone
+        const appointmentStartMoment = moment.utc(appointmentStartTimeStr).tz(timezone);
+        const appointmentStartDate = appointmentStartMoment.format('YYYY-MM-DD');
+        
+        const appointmentStartHour = appointmentStartMoment.hours();
+        const appointmentStartMinutes = appointmentStartMoment.minutes();
+        
+        console.log(`Appointment start time in ${timezone}: ${appointmentStartHour}:${appointmentStartMinutes}`);
+        
+        // Check if the appointment has an end time
+        let appointmentEndMoment;
+        let appointmentEndHour;
+        let appointmentEndMinutes;
+        let appointmentEndDate;
+        
+        if (appointment.End_Time) {
+          // Parse the appointment end time and convert from UTC to company timezone
+          const appointmentEndTimeStr = appointment.End_Time;
+          console.log(`Raw appointment end time (UTC): ${appointmentEndTimeStr}`);
+          
+          // Convert UTC appointment end time to company timezone
+          appointmentEndMoment = moment.utc(appointmentEndTimeStr).tz(timezone);
+          appointmentEndDate = appointmentEndMoment.format('YYYY-MM-DD');
+          
+          appointmentEndHour = appointmentEndMoment.hours();
+          appointmentEndMinutes = appointmentEndMoment.minutes();
+          
+          console.log(`Appointment end time in ${timezone}: ${appointmentEndHour}:${appointmentEndMinutes}`);
+        }
+        
+        console.log(`Comparing slot ${slotTimeStr} on ${slotDateOnly} with appointment from ${appointmentStartDate} to ${appointmentEndDate || appointmentStartDate}`);
+        
+        // Create a moment object for the slot time
+        const slotMoment = moment(slot);
+        
+        // For multi-day appointments, check if the slot date falls within the appointment's date range
+        let isWithinDateRange = false;
+        
+        // Debug the date we're processing
+        console.log(`Processing slot date: ${slotDateOnly}, comparing with appointment from ${appointmentStartDate} to ${appointmentEndDate}`);
+        
+        if (appointmentEndMoment) {
+          // Check if the slot date is on or after the appointment start date
+          // and on or before the appointment end date
+          const slotMomentDateOnly = moment(slotDateOnly);
+          const appointmentStartMomentDateOnly = moment(appointmentStartDate);
+          const appointmentEndMomentDateOnly = moment(appointmentEndDate);
+          
+          isWithinDateRange = (
+            slotMomentDateOnly.isSameOrAfter(appointmentStartMomentDateOnly, 'day') &&
+            slotMomentDateOnly.isSameOrBefore(appointmentEndMomentDateOnly, 'day')
+          );
+          
+          // If the slot date is between start and end date (not including start/end dates),
+          // mark it as conflicting immediately
+          if (isWithinDateRange &&
+              !slotMomentDateOnly.isSame(appointmentStartMomentDateOnly, 'day') &&
+              !slotMomentDateOnly.isSame(appointmentEndMomentDateOnly, 'day')) {
+            console.log(`Conflict found: Slot ${slotTimeStr} is on an intermediate day (${slotDateOnly}) of a multi-day appointment from ${appointmentStartDate} to ${appointmentEndDate}`);
+            return true;
+          }
+          
+          // For debugging, log the full date range
+          console.log(`Slot date ${slotDateOnly} is ${isWithinDateRange ? 'within' : 'outside'} appointment date range ${appointmentStartDate} to ${appointmentEndDate}`);
+          
+          // If the slot date is on the same day as the appointment end date,
+          // check if the slot time is before the appointment end time
+          if (slotDateOnly === appointmentEndDate) {
+            console.log(`Slot is on the same day as appointment end date. Checking time...`);
+            // If the slot hour is after the appointment end hour, it's not within the range
+            if (slotMoment.hours() > appointmentEndHour) {
+              isWithinDateRange = false;
+              console.log(`Slot time ${slotMoment.hours()}:${slotMoment.minutes()} is after appointment end time ${appointmentEndHour}:${appointmentEndMinutes}, so it's not within range`);
+            }
+          }
+        } else {
+          // If there's no end time, check if the slot date is the same as the appointment date
+          isWithinDateRange = slotDateOnly === appointmentStartDate;
+        }
+        
+        // If the slot date is not within the appointment's date range, there's no conflict
+        if (!isWithinDateRange) {
           return false;
         }
         
-        const appointmentHour = parseInt(timeMatch[1], 10);
-        const appointmentMinutes = parseInt(timeMatch[2], 10);
-        
-        console.log(`Extracted appointment hour: ${appointmentHour} UTC`);
-        console.log(`Comparing slot ${slotTimeStr} with appointment at UTC time ${appointmentHour}:${appointmentMinutes}`);
-        
-        // Check if the slot hour is the same as the appointment hour
-        // or one hour before or after
-        if (slotHour >= appointmentHour - 1 && slotHour <= appointmentHour + 1) {
-          console.log(`Conflict found: Slot ${slotTimeStr} conflicts with appointment at ${appointmentTimeStr} (UTC time ${appointmentHour}:${appointmentMinutes})`);
-          return true;
+        // For multi-day appointments, handle conflict detection differently
+        if (appointmentEndMoment) {
+          // Case 1: If the slot is on a day between start and end dates (not including start/end dates),
+          // it always conflicts - all slots on intermediate days are unavailable
+          if (slotDateOnly !== appointmentStartDate && slotDateOnly !== appointmentEndDate) {
+            console.log(`Conflict found: Slot ${slotTimeStr} is on an intermediate day of a multi-day appointment`);
+            return true;
+          }
+          
+          // Case 2: If the slot is on the start date, it conflicts if it's at or after the start time
+          if (slotDateOnly === appointmentStartDate) {
+            const isAfterOrEqualToStartTime = slotMoment.hours() >= appointmentStartHour ||
+              (slotMoment.hours() === appointmentStartHour && slotMoment.minutes() >= appointmentStartMinutes);
+            
+            if (isAfterOrEqualToStartTime) {
+              console.log(`Conflict found: Slot ${slotTimeStr} is on appointment start date and at/after start time`);
+              return true;
+            }
+          }
+          
+          // Case 3: If the slot is on the end date, it conflicts if it's before the end time
+          if (slotDateOnly === appointmentEndDate) {
+            const isBeforeEndTime = slotMoment.hours() < appointmentEndHour ||
+              (slotMoment.hours() === appointmentEndHour && slotMoment.minutes() < appointmentEndMinutes);
+            
+            if (isBeforeEndTime) {
+              console.log(`Conflict found: Slot ${slotTimeStr} is on appointment end date and before end time`);
+              return true;
+            }
+          }
+          
+          return false;
+        } else {
+          // For single-day appointments, use the original logic
+          // A slot conflicts if it's within 1 hour of the appointment start time
+          const conflictsWithStart = Math.abs(slotMoment.hours() - appointmentStartHour) <= 1;
+          return conflictsWithStart;
         }
         
+        // This code is unreachable now as we return directly from the conditions above
+        // Keeping a debug log just in case
+        console.log(`No conflict found for slot ${slotTimeStr} with appointment from ${appointmentStartDate} to ${appointmentEndDate || appointmentStartDate}`);
         return false;
       } catch (error) {
         console.error(`Error checking appointment conflict: ${appointment.Id}`, error);
@@ -414,7 +587,7 @@ const getSalesRepsUsers = async () => {
       .select('Id,Name,Project_Categories')
       .eq('Est_App_Login', true)
       .eq('Active', true)
-    
+    console.log('getSalesRepsUsers', data);
     if (error) {
       console.error('Supabase error:', error);
       throw new Error(`Error retrieving Sales Reps Users: ${error.message}`);
@@ -449,7 +622,7 @@ const getAppointments = async (users) => {
   // Query appointments for the current week only
   const { data, error } = await supabase
     .from('Events')
-    .select('Id,Scheduled_Time,Staff')
+    .select('Id,Scheduled_Time,Staff,End_Time')
     .in('Staff', userIds)
     .gte('Scheduled_Time', weekStart)
     .lte('Scheduled_Time', weekEnd)
@@ -480,7 +653,7 @@ const getAppointments = async (users) => {
  * @param {Array} processedSlots - Processed availability slots
  * @returns {Array} Formatted response as an array
  */
-const formatResponseAsArray = (processedSlots) => {
+const formatResponseAsArray = (processedSlots, timezone) => {
   if (!processedSlots || processedSlots.length === 0) {
     return [];
   }
@@ -550,5 +723,7 @@ const formatResponseAsArray = (processedSlots) => {
 };
 
 module.exports = {
-  getUserAppointmentsAvailabilitySlots
+  getUserAppointmentsAvailabilitySlots,
+  getCompanyDefaultTimezone, // Export timezone utility functions
+  convertUTCToTimezone
 };

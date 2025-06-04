@@ -82,6 +82,7 @@ Creates a new event in the system.
       "Updated_By": "6d3fb306-6a41-439d-b3be-ba5a4c96c988",
       "Name": "Postman Test",
       "Scheduled_Time": "2025-04-18T09:38:00+00:00",
+      "End_Time": "2025-04-18T11:38:00+00:00",
       "Salesforce_Id": null,
       "Street": "5 San Rosa Way",
       "City": "Chelmsford",
@@ -106,6 +107,7 @@ Creates a new event in the system.
   "Id": "1234-5678-90ab-cdef",
   "Event_Type": "Appointment",
   "Scheduled_Time": "2025-05-15T14:00:00Z",
+  "End_Time": "2025-05-15T16:00:00Z",
   "Status": "Scheduled",
   "Staff": "12345",
   "Customer": "67890",
@@ -140,6 +142,7 @@ Retrieves all events from the system.
     "Id": "1234-5678-90ab-cdef",
     "Event_Type": "Appointment",
     "Scheduled_Time": "2025-05-15T14:00:00Z",
+    "End_Time": "2025-05-15T16:00:00Z",
     "Status": "Scheduled",
     "Staff": "12345",
     "Customer": "67890",
@@ -151,6 +154,7 @@ Retrieves all events from the system.
     "Id": "abcd-efgh-ijkl-mnop",
     "Event_Type": "Follow-up",
     "Scheduled_Time": "2025-05-16T10:00:00Z",
+    "End_Time": "2025-05-16T11:30:00Z",
     "Status": "Pending",
     "Staff": "12345",
     "Customer": "67890",
@@ -180,6 +184,7 @@ Retrieves a specific event by its ID.
   "Id": "1234-5678-90ab-cdef",
   "Event_Type": "Appointment",
   "Scheduled_Time": "2025-05-15T14:00:00Z",
+  "End_Time": "2025-05-15T16:00:00Z",
   "Status": "Scheduled",
   "Staff": "12345",
   "Customer": "67890",
@@ -224,6 +229,7 @@ Updates an existing event by its ID.
   "Id": "1234-5678-90ab-cdef",
   "Event_Type": "Appointment",
   "Scheduled_Time": "2025-05-15T14:00:00Z",
+  "End_Time": "2025-05-15T16:00:00Z",
   "Status": "Completed",
   "Staff": "12345",
   "Customer": "67890",
@@ -261,6 +267,7 @@ Deletes an event by its ID.
     "Id": "1234-5678-90ab-cdef",
     "Event_Type": "Appointment",
     "Scheduled_Time": "2025-05-15T14:00:00Z",
+    "End_Time": "2025-05-15T16:00:00Z",
     "Status": "Completed",
     "Staff": "12345",
     "Customer": "67890",
@@ -284,10 +291,17 @@ The Sales-Rep Availability API provides endpoints to retrieve availability slots
 
 ### Get Availability Slots
 
-Retrieves availability slots for all active sales representatives for the current week.
+Retrieves availability slots for all active sales representatives for the current week. The endpoint automatically filters out time slots that conflict with existing appointments, including multi-day appointments.
 
 - **URL**: `/sales-rep-availability`
 - **Method**: `GET`
+
+**Multi-day Appointment Handling**:
+
+When calculating availability slots, the system handles appointments that span multiple days as follows:
+- For the appointment start date: All slots at or after the appointment start time are marked as unavailable
+- For intermediate days (days between start and end dates): All slots for the entire day are marked as unavailable
+- For the appointment end date: All slots before the appointment end time are marked as unavailable
 
 **Success Response**:
 
@@ -348,6 +362,7 @@ Retrieves availability slots for all active sales representatives for the curren
 | Name                 | String      | Name of the event                                                      |
 | Event_Type           | String      | Type of event (see Picklist Fields below)                              |
 | Scheduled_Time       | TIMESTAMPTZ | When the event is scheduled (ISO format)                               |
+| End_Time             | TIMESTAMPTZ | When the event ends (ISO format) - used for multi-day appointments     |
 | Duration_Minutes     | Integer     | Duration of the event in minutes                                       |
 | Status               | String      | Current status of the event (see Picklist Fields)                      |
 | Result               | String      | Outcome of the event (see Picklist Fields)                             |
@@ -399,6 +414,15 @@ The availability slots are structured as follows:
   - `availability`: Array of daily availability objects
     - `day`: Date in YYYY-MM-DD format
     - `slots`: Array of available time slots in HH:MM:SS format
+
+**Availability Calculation**:
+
+Availability slots are calculated based on:
+1. The sales representative's configured availability schedule
+2. Existing appointments in the system
+3. Conflict detection with both single-day and multi-day appointments
+
+For multi-day appointments, the system ensures that all affected time slots across the entire appointment duration are properly marked as unavailable, preventing double-booking.
 
 ## Error Handling
 
