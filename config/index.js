@@ -17,6 +17,15 @@ const config = {
   supabase: {
     url: process.env.SUPABASE_URL,
     key: process.env.SUPABASE_KEY
+  },
+  aws: {
+    ses: {
+      accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+      region: process.env.AWS_REGION || 'us-east-1',
+      senderEmail: process.env.AWS_SES_SENDER_EMAIL,
+      senderName: process.env.AWS_SES_SENDER_NAME
+    }
   }
 };
 
@@ -25,7 +34,12 @@ const requiredEnvVars = [
   'PORT',
   'NODE_ENV',
   'SUPABASE_URL',
-  'SUPABASE_KEY'
+  'SUPABASE_KEY',
+  'AWS_ACCESS_KEY_ID',
+  'AWS_SECRET_ACCESS_KEY',
+  'AWS_REGION',
+  'AWS_SES_SENDER_EMAIL',
+  'AWS_SES_SENDER_NAME'
 ];
 
 const missingEnvVars = requiredEnvVars.filter(envVar => !process.env[envVar]);

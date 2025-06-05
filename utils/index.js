@@ -79,6 +79,9 @@ const paginate = (array, page = 1, limit = 10) => {
 // Import Supabase clients
 const { supabase, supabaseCrmSettings } = require('./supabase');
 
+// Import Email service
+const emailService = require('./email');
+
 module.exports = {
   generateId,
   formatDate,
@@ -86,5 +89,6 @@ module.exports = {
   sanitizeObject,
   paginate,
   supabase,
-  supabaseCrmSettings
+  supabaseCrmSettings,
+  emailService
 };
