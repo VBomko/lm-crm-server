@@ -14,7 +14,9 @@ This document provides comprehensive documentation for the Sales-Rep Availabilit
    - [Update Event](#update-event)
    - [Delete Event](#delete-event)
 5. [Sales-Rep Availability API](#sales-rep-availability-api)
-   - [Get Availability Slots](#get-availability-slots)
+   - [Get Availability Slots for Current Week](#get-availability-slots-for-current-week)
+   - [Get Availability Slots for Specific Day](#get-availability-slots-for-specific-day)
+   - [Backward Compatibility](#backward-compatibility)
 6. [Data Models](#data-models)
    - [Event Model](#event-model)
    - [Availability Slot Model](#availability-slot-model)
@@ -289,12 +291,64 @@ Deletes an event by its ID.
 
 The Sales-Rep Availability API provides endpoints to retrieve availability slots for sales representatives.
 
-### Get Availability Slots
+### Get Availability Slots for Current Week
 
 Retrieves availability slots for all active sales representatives for the current week. The endpoint automatically filters out time slots that conflict with existing appointments, including multi-day appointments.
 
+- **URL**: `/sales-rep-availability/current-week`
+- **Method**: `GET`
+
+### Get Availability Slots for Specific Day
+
+Retrieves availability slots for all active sales representatives for a specific day. The endpoint automatically filters out time slots that conflict with existing appointments, including multi-day appointments. It returns availability based on the day of the week configuration (e.g., if the specified date is a Wednesday, it returns the sales rep's Wednesday availability).
+
+- **URL**: `/sales-rep-availability/day=:day`
+- **Method**: `GET`
+- **URL Parameters**:
+  - `day`: Date in YYYY-MM-DD format (e.g., 2025-06-18)
+
+**Example Request**:
+```
+GET /sales-rep-availability/day=2025-06-18
+```
+
+**Success Response**:
+- **Code**: 200 OK
+- **Content Example**:
+
+```json
+{
+  "success": true,
+  "message": "Availability slots for 2025-06-18 retrieved successfully",
+  "data": [
+    {
+      "userId": "6d3fb306-6a41-439d-b3be-ba5a4c96c988",
+      "userName": "John Doe",
+      "capabilities": ["Kitchen", "Bathroom"],
+      "availability": [
+        {
+          "day": "2025-06-18",
+          "slots": ["10:00:00", "14:00:00", "18:00:00"]
+        }
+      ]
+    }
+  ]
+}
+```
+
+**Error Response**:
+- **Code**: 400 Bad Request
+  - **Content**: `{ "success": false, "message": "Invalid day format. Please use YYYY-MM-DD format (e.g., 2025-06-12)" }`
+- **Code**: 500 Internal Server Error
+  - **Content**: `{ "success": false, "message": "Server error", "error": "Error message details" }`
+
+### Backward Compatibility
+
+For backward compatibility, the original endpoint is still supported and redirects to the current-week endpoint:
+
 - **URL**: `/sales-rep-availability`
 - **Method**: `GET`
+- **Behavior**: Redirects to `/sales-rep-availability/current-week`
 
 **Multi-day Appointment Handling**:
 
@@ -303,7 +357,7 @@ When calculating availability slots, the system handles appointments that span m
 - For intermediate days (days between start and end dates): All slots for the entire day are marked as unavailable
 - For the appointment end date: All slots before the appointment end time are marked as unavailable
 
-**Success Response**:
+**Success Response for Current Week**:
 
 - **Code**: 200 OK
 - **Content Example**:

@@ -135,7 +135,7 @@ const getUserAppointmentsAvailabilitySlots = async (req, res) => {
     // Get their availability settings
     const usersAppointmentsAvailability = await getSalesRepsUsersAppointmentsAvailability(users);
     
-    // Get existing appointments
+    // Get existing appointments for the current week
     const appointments = await getAppointments(users);
     console.log('appointments',appointments);
     // Get current week dates
@@ -150,12 +150,20 @@ const getUserAppointmentsAvailabilitySlots = async (req, res) => {
       defaultTimezone
     );
 
-    // Format the response as an array
-    const formattedResponse = formatResponseAsArray(processedAvailabilitySlots, defaultTimezone);
+    // Format the response as an array (no specific date for current week)
+    const formattedResponse = formatResponseAsArray(processedAvailabilitySlots, defaultTimezone, null);
+
+    // Check if any availability slots were found
+    const hasAvailability = formattedResponse.some(user =>
+      user.availability && user.availability.length > 0 &&
+      user.availability.some(day => day.slots && day.slots.length > 0)
+    );
 
     return res.status(200).json({
       success: true,
-      message: 'Availability slots retrieved successfully',
+      message: hasAvailability
+        ? 'Availability slots retrieved successfully'
+        : 'No availability slots found for the current week',
       data: formattedResponse || []
     });
   } catch (err) {
@@ -176,7 +184,7 @@ const getUserAppointmentsAvailabilitySlots = async (req, res) => {
  * @param {Array} weekDates - Current week dates
  * @returns {Array} Processed availability slots
  */
-const processAvailabilitySlots = (users, usersAvailability, appointments, weekDates, timezone) => {
+const processAvailabilitySlots = (users, usersAvailability, appointments, dates, timezone) => {
   const result = [];
   
   // Process each user
@@ -220,12 +228,12 @@ const processAvailabilitySlots = (users, usersAvailability, appointments, weekDa
     // Get user's appointments
     const userAppointments = appointments.filter(appointment => appointment.Staff === user.Id);
     
-    // Process each day of the week
-    weekDates.forEach(date => {
+    // Process each date in the provided dates array (could be a week or a single day)
+    dates.forEach(date => {
       const dayName = getDayName(date);
       console.log(`Processing day: ${dayName} (${date.toISOString().split('T')[0]})`);
       
-      // Find availability for this day
+      // Find availability for this day of the week
       const dayAvailability = availabilitySlots.find(slot => slot.day === dayName);
       
       if (!dayAvailability || !dayAvailability.slots || dayAvailability.slots.length === 0) {
@@ -600,32 +608,47 @@ const getSalesRepsUsers = async () => {
   }
 }
 
-const getAppointments = async (users) => {
+const getAppointments = async (users, specificDate = null) => {
   if (!users || users.length === 0) {
     return [];
   }
 
   const userIds = users.map(user => user.Id);
   
-  // Get current week's start and end dates
-  const weekDates = getCurrentWeekDates();
-  // For Supabase queries, ISO format (UTC) is generally preferred.
-  const weekStart = formatISO(weekDates[0]);
+  let startDate, endDate;
   
-  // Create a new date object for the end of the week
-  const weekEndDate = new Date(weekDates[6]); // This is local Sunday
-  // To get end of local Sunday in ISO (UTC)
-  const endOfLocalSunday = endOfWeek(weekDates[6], { weekStartsOn: 1 }); // Ensure it's truly end of day
-  endOfLocalSunday.setHours(23,59,59,999); // Set to end of day in local time
-  const weekEnd = formatISO(endOfLocalSunday); // Convert to ISO string (UTC)
+  if (specificDate) {
+    // If a specific date is provided, set the start and end to that day
+    const startOfDay = new Date(specificDate);
+    startOfDay.setHours(0, 0, 0, 0);
+    
+    const endOfDay = new Date(specificDate);
+    endOfDay.setHours(23, 59, 59, 999);
+    
+    startDate = formatISO(startOfDay);
+    endDate = formatISO(endOfDay);
+    
+    console.log(`Fetching appointments for specific date: ${format(specificDate, 'yyyy-MM-dd')}`);
+  } else {
+    // Otherwise, get the current week's dates
+    const weekDates = getCurrentWeekDates();
+    startDate = formatISO(weekDates[0]);
+    
+    // Create a new date object for the end of the week
+    const endOfLocalSunday = endOfWeek(weekDates[6], { weekStartsOn: 1 });
+    endOfLocalSunday.setHours(23, 59, 59, 999); // Set to end of day in local time
+    endDate = formatISO(endOfLocalSunday);
+    
+    console.log(`Fetching appointments for current week: ${format(weekDates[0], 'yyyy-MM-dd')} to ${format(endOfLocalSunday, 'yyyy-MM-dd')}`);
+  }
   
-  // Query appointments for the current week only
+  // Query appointments for the specified time period
   const { data, error } = await supabase
     .from('Events')
     .select('Id,Scheduled_Time,Staff,End_Time')
     .in('Staff', userIds)
-    .gte('Scheduled_Time', weekStart)
-    .lte('Scheduled_Time', weekEnd)
+    .gte('Scheduled_Time', startDate)
+    .lte('Scheduled_Time', endDate);
   
   if (error) {
     console.error('Supabase error:', error);
@@ -634,15 +657,12 @@ const getAppointments = async (users) => {
   
   // Log appointments for debugging
   if (data && data.length > 0) {
-    console.log(`Found ${data.length} appointments for the current week`);
+    const period = specificDate ? `date ${format(specificDate, 'yyyy-MM-dd')}` : 'current week';
+    console.log(`Found ${data.length} appointments for the ${period}`);
     console.log('Sample appointment:', JSON.stringify(data[0]));
   } else {
-    console.log('No appointments found for the current week');
-  }
-    
-  if (error) {
-    console.error('Supabase error:', error);
-    throw new Error(`Error retrieving appointments: ${error.message}`);
+    const period = specificDate ? `date ${format(specificDate, 'yyyy-MM-dd')}` : 'current week';
+    console.log(`No appointments found for the ${period}`);
   }
 
   return data || [];
@@ -653,7 +673,7 @@ const getAppointments = async (users) => {
  * @param {Array} processedSlots - Processed availability slots
  * @returns {Array} Formatted response as an array
  */
-const formatResponseAsArray = (processedSlots, timezone) => {
+const formatResponseAsArray = (processedSlots, timezone, specificDate = null) => {
   if (!processedSlots || processedSlots.length === 0) {
     return [];
   }
@@ -688,7 +708,7 @@ const formatResponseAsArray = (processedSlots, timezone) => {
   console.log(`Current week Monday (date-fns): ${format(monday, 'yyyy-MM-dd HH:mm:ss')}`);
   console.log(`Current week Sunday (date-fns): ${format(sunday, 'yyyy-MM-dd HH:mm:ss')}`);
   
-  // Filter and sort availability to only include dates from the current Monday-Sunday week
+  // Filter and sort availability
   Object.keys(userMap).forEach(currentUserId => {
     userMap[currentUserId].availability = userMap[currentUserId].availability
       .filter(item => {
@@ -698,9 +718,20 @@ const formatResponseAsArray = (processedSlots, timezone) => {
           console.warn(`Invalid date string encountered: ${item.day} for user ${currentUserId}`);
           return false;
         }
-        const isInCurrentWeek = date >= monday && date <= sunday;
-        // console.log(`Date ${item.day} for user ${currentUserId}: ${isInCurrentWeek ? 'in current week' : 'not in current week'}`);
-        return isInCurrentWeek;
+        
+        // If a specific date is provided, only include that date
+        if (specificDate) {
+          const specificDateStr = format(specificDate, 'yyyy-MM-dd');
+          const itemDateStr = format(date, 'yyyy-MM-dd');
+          const isMatchingDate = itemDateStr === specificDateStr;
+          console.log(`Date ${item.day} for user ${currentUserId}: ${isMatchingDate ? 'matches specific date' : 'does not match specific date'} ${specificDateStr}`);
+          return isMatchingDate;
+        } else {
+          // Otherwise, only include dates from the current Monday-Sunday week
+          const isInCurrentWeek = date >= monday && date <= sunday;
+          // console.log(`Date ${item.day} for user ${currentUserId}: ${isInCurrentWeek ? 'in current week' : 'not in current week'}`);
+          return isInCurrentWeek;
+        }
       })
       .sort((a, b) => {
         const dateA = new Date(a.day);
@@ -722,8 +753,95 @@ const formatResponseAsArray = (processedSlots, timezone) => {
   }));
 };
 
+/**
+ * Get User Appointments Availability Slots for a specific day
+ *
+ * @param {Object} req - Express request object with day parameter
+ * @param {Object} res - Express response object
+ * @returns {Object} - Availability slots for the user on the specified day
+ */
+const getUserAppointmentsAvailabilitySlotsForDay = async (req, res) => {
+  try {
+    // Get the day parameter from the request
+    const { day } = req.params;
+    
+    // Validate the day parameter format (YYYY-MM-DD)
+    if (!day || !day.match(/^\d{4}-\d{2}-\d{2}$/)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid day format. Please use YYYY-MM-DD format (e.g., 2025-06-12)'
+      });
+    }
+    
+    // Parse the day parameter to create a Date object
+    const specificDate = new Date(day);
+    
+    // Check if the date is valid
+    if (isNaN(specificDate.getTime())) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid date. Please provide a valid date in YYYY-MM-DD format'
+      });
+    }
+    
+    // Get the day name (e.g., "Monday", "Tuesday") for the specific date
+    const dayName = getDayName(specificDate);
+    console.log(`Specific date ${day} is a ${dayName} - will check for availability slots on ${dayName}s`);
+    
+    // Fetch company settings to get default timezone
+    const defaultTimezone = await getCompanyDefaultTimezone();
+    console.log(`Using company default timezone: ${defaultTimezone}`);
+    
+    // Get sales rep users
+    const users = await getSalesRepsUsers();
+    
+    // Get their availability settings
+    const usersAppointmentsAvailability = await getSalesRepsUsersAppointmentsAvailability(users);
+    
+    // Get existing appointments for the specific date
+    const appointments = await getAppointments(users, specificDate);
+    
+    // Create an array with just the specific date
+    const specificDateArray = [specificDate];
+    
+    // Process availability slots for each user for the specific date
+    const processedAvailabilitySlots = processAvailabilitySlots(
+      users,
+      usersAppointmentsAvailability,
+      appointments,
+      specificDateArray,
+      defaultTimezone
+    );
+    
+    // Format the response as an array with the specific date
+    const formattedResponse = formatResponseAsArray(processedAvailabilitySlots, defaultTimezone, specificDate);
+    
+    // Check if any availability slots were found
+    const hasAvailability = formattedResponse.some(user =>
+      user.availability && user.availability.length > 0 &&
+      user.availability.some(day => day.slots && day.slots.length > 0)
+    );
+    
+    return res.status(200).json({
+      success: true,
+      message: hasAvailability
+        ? `Availability slots for ${day} retrieved successfully`
+        : `No availability slots found for ${day}`,
+      data: formattedResponse || []
+    });
+  } catch (err) {
+    console.error(`Server error in getUserAppointmentsAvailabilitySlotsForDay for day ${req.params.day}:`, err);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: err.message
+    });
+  }
+};
+
 module.exports = {
   getUserAppointmentsAvailabilitySlots,
+  getUserAppointmentsAvailabilitySlotsForDay,
   getCompanyDefaultTimezone, // Export timezone utility functions
   convertUTCToTimezone
 };
