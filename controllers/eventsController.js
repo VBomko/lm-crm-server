@@ -1,19 +1,190 @@
-const { supabase } = require('../utils');
+const { supabase, supabaseCrmSettings } = require('../utils');
 
 const TABLE_NAME = 'Events';
+const LEADS_TABLE_NAME = 'Leads';
+
+// Helper function to validate Lead_Data
+const validateLeadData = (leadData) => {
+  if (!leadData) return null;
+  
+  const { First_Name, Last_Name, Email, Phone } = leadData;
+  
+  if (!First_Name || !Last_Name || !Email || !Phone) {
+    throw new Error('Lead_Data requires First_Name, Last_Name, Email, and Phone fields');
+  }
+  
+  return leadData;
+};
+
+// Helper function to search for existing lead by email or phone
+const findExistingLead = async (email, phone) => {
+  try {
+    const { data, error } = await supabase
+      .from(LEADS_TABLE_NAME)
+      .select('*')
+      .or(`Email.eq.${email},Phone.eq.${phone}`)
+      .limit(1);
+
+    if (error) {
+      console.error('Error searching for existing lead:', error);
+      throw error;
+    }
+    console.log('data', data);
+    return data && data.length > 0 ? data[0] : null;
+  } catch (err) {
+    console.error('Error in findExistingLead:', err);
+    throw err;
+  }
+};
+
+// Helper function to update existing lead
+const updateLead = async (leadId, leadData) => {
+  try {
+    const updateData = {
+      ...leadData,
+      Updated_At: new Date().toISOString()
+    };
+
+    const { data, error } = await supabase
+      .from(LEADS_TABLE_NAME)
+      .update(updateData)
+      .eq('Id', leadId)
+      .select();
+
+    if (error) {
+      console.error('Error updating lead:', error);
+      throw error;
+    }
+
+    return data && data.length > 0 ? data[0] : null;
+  } catch (err) {
+    console.error('Error in updateLead:', err);
+    throw err;
+  }
+};
+
+// Helper function to create new lead
+const createLead = async (leadData) => {
+  try {
+    const insertData = {
+      ...leadData,
+      Created_At: new Date().toISOString(),
+      Updated_At: new Date().toISOString()
+    };
+
+    const { data, error } = await supabase
+      .from(LEADS_TABLE_NAME)
+      .insert([insertData])
+      .select();
+
+    if (error) {
+      console.error('Error creating lead:', error);
+      throw error;
+    }
+
+    return data && data.length > 0 ? data[0] : null;
+  } catch (err) {
+    console.error('Error in createLead:', err);
+    throw err;
+  }
+};
+
+// Helper function to process Lead_Data and return lead ID
+const processLeadData = async (leadData) => {
+  if (!leadData) return null;
+
+  try {
+    // Validate Lead_Data
+    const validatedLeadData = validateLeadData(leadData);
+    
+    // If Lead_Data has an Id, use it directly
+    // if (validatedLeadData.Id) {
+    //   return validatedLeadData;
+    // }
+
+    // Search for existing lead by email or phone
+    const existingLead = await findExistingLead(validatedLeadData.Email, validatedLeadData.Phone);
+    
+    if (existingLead) {
+      // Update existing lead with new data
+      const updatedLead = await updateLead(existingLead.Id, validatedLeadData);
+      return updatedLead;
+    } else {
+      // Create new lead
+      const newLead = await createLead(validatedLeadData);
+      return newLead;
+    }
+  } catch (err) {
+    console.error('Error processing Lead_Data:', err);
+    throw err;
+  }
+};
+
+// Helper function to fetch Record_Type for Events
+const getRecordTypeForEvent = async () => {
+  try {
+    const { data, error } = await supabaseCrmSettings
+      .from('Record_Types')
+      .select('*')
+      .eq('Table', 'Events')
+      .eq('Name', 'Sales Appointment')
+      .single();
+
+    if (error) {
+      console.error('Error fetching Record_Type:', error);
+      throw error;
+    }
+
+    return data;
+  } catch (err) {
+    console.error('Error in getRecordTypeForEvent:', err);
+    throw err;
+  }
+};
 
 // Create a new event
 const createEvent = async (req, res, next) => {
-  const { Event_Type, Scheduled_Time, Status } = req.body;
+  const { Event_Type, Scheduled_Time, Status, Lead_Data } = req.body;
 
   if (!Event_Type || !Scheduled_Time || !Status) {
     return res.status(400).json({ error: 'Event_Type, Scheduled_Time, and Status are required' });
   }
 
   try {
+    // Fetch Record_Type for the event
+    let recordType = null;
+    try {
+      recordType = await getRecordTypeForEvent();
+    } catch (recordTypeError) {
+      console.warn(`Record_Type not found for Event_Type: ${Event_Type}`, recordTypeError.message);
+      // Continue without Record_Type if not found
+    }
+
+    // Process Lead_Data if provided
+    let lead = null;
+    if (Lead_Data) {
+      try {
+        lead = await processLeadData(Lead_Data);
+      } catch (leadError) {
+        return res.status(400).json({ error: `Lead processing error: ${leadError.message}` });
+      }
+    }
+
+    // Prepare event data
+    console.log('lead', lead);
+    const eventData = {
+      ...req.body,
+      Lead: lead?.Id || req.body.Lead_Data?.Id,
+      Customer: lead?.Customer,
+      Record_Type: recordType?.Id // Add Record_Type ID if found
+    };
+
+    // Remove Lead_Data from event data as it's not part of the Events table
+    delete eventData.Lead_Data;
+
     const { data, error } = await supabase
       .from(TABLE_NAME)
-      .insert([req.body])
+      .insert([eventData])
       .select();
 
     if (error) {
@@ -24,7 +195,18 @@ const createEvent = async (req, res, next) => {
     if (!data || data.length === 0) {
       return res.status(500).json({ error: 'Failed to create event, no data returned' });
     }
-    res.status(201).json(data[0]);
+
+    // Return the created event with lead and record type information if applicable
+    const response = {
+      ...data[0],
+      Lead_Processed: lead?.Id ? true : false,
+      // Lead: lead?.Id,
+      // Customer: lead?.Customer, // Ensure Customer is set from the processed lead
+      Record_Type_Processed: recordType ? true : false,
+      // Record_Type: recordType?.Id
+    };
+
+    res.status(201).json(response);
   } catch (err) {
     console.error('Error in createEvent controller:', err);
     next(err);

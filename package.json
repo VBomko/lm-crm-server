@@ -5,7 +5,8 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "test:lead": "node test-lead-event.js"
   },
   "author": "",
   "license": "ISC",
@@ -14,6 +15,7 @@
     "@aws-sdk/client-ses": "^3.823.0",
     "@supabase/supabase-js": "^2.49.4",
     "aws-sdk": "^2.1692.0",
+    "axios": "^1.6.0",
     "cors": "^2.8.5",
     "date-fns": "^4.1.0",
     "date-fns-tz": "^3.2.0",

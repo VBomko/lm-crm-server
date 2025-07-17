@@ -63,10 +63,45 @@ Start the server in production mode:
 npm start
 ```
 
+### Testing
+
+Test the Lead_Data functionality:
+```
+npm run test:lead
+```
+
+This will run comprehensive tests for the new lead management features.
+
 ## API Endpoints
 
 - `GET /api/health` - Health check endpoint
 - `GET /api/example` - Example endpoint
+
+### Events API
+
+- `POST /events` - Create a new event (supports Lead_Data)
+- `GET /events` - Get all events
+- `GET /events/:id` - Get event by ID
+- `PUT /events/:id` - Update event
+- `DELETE /events/:id` - Delete event
+
+### Lead Management
+
+The Events API now supports lead management through the `Lead_Data` object:
+
+- **Automatic Lead Creation**: When creating an event with `Lead_Data`, the system automatically creates or updates leads
+- **Lead Deduplication**: Searches for existing leads by email or phone to prevent duplicates
+- **Lead Association**: Automatically associates the lead with the event via the `Lead` field
+
+### Record Type Management
+
+The Events API automatically fetches and associates Record Types:
+
+- **Automatic Record Type Lookup**: Fetches Record_Type from `crm_settings.Record_Types` table based on Event_Type
+- **Table Filtering**: Searches for records where `Table = 'Events'` and `Name = Event_Type`
+- **Graceful Handling**: Continues event creation even if Record_Type is not found
+
+For detailed API documentation, see [API_DOCUMENTATION.md](API_DOCUMENTATION.md).
 
 ## Development
 
