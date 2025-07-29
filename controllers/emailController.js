@@ -168,8 +168,51 @@ const sendCustomEmail = async (req, res, next) => {
   }
 };
 
+/**
+ * Send a change order email
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @param {Function} next - Express next middleware function
+ */
+const sendChangeOrderEmail = async (req, res, next) => {
+  try {
+    const { emails, customerName, changeOrderUrl } = req.body;
+
+    if (!emails || !Array.isArray(emails) || emails.length === 0 || !customerName || !changeOrderUrl) {
+      return res.status(400).json({
+        success: false,
+        message: 'Emails (array), customer name, and change order URL are required'
+      });
+    }
+
+    const templateData = {
+      customerName,
+      changeOrderUrl
+    };
+
+    const result = await emailService.sendTemplatedEmail({
+      to: emails,
+      subject: `${customerName}  please sign this Change Order ASAP`,
+      templateName: 'change-order',
+      templateData
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Change order email sent successfully',
+      data: {
+        messageId: result.MessageId,
+        recipientCount: emails.length
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   sendWelcomeEmail,
   sendAppointmentConfirmation,
-  sendCustomEmail
+  sendCustomEmail,
+  sendChangeOrderEmail
 };
