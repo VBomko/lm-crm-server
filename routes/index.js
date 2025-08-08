@@ -5,6 +5,7 @@ const router = express.Router();
 const availabilityRoutes = require('./usersAppointmentsAvailabilitySlots');
 const eventRoutes = require('./events'); // Import event routes
 const emailRoutes = require('./email'); // Import email routes
+const authRoutes = require('./auth');
 
 // Health check route
 router.get('/health', (req, res) => {
@@ -15,5 +16,6 @@ router.get('/health', (req, res) => {
 router.use('/sales-rep-availability', availabilityRoutes);
 router.use('/events', eventRoutes); // Use event routes
 router.use('/email', emailRoutes); // Use email routes
+router.use('/api/auth', authRoutes);
 
 module.exports = router;

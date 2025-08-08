@@ -12,7 +12,7 @@ const config = {
     version: process.env.API_VERSION || 'v1'
   },
   cors: {
-    origin: process.env.CORS_ORIGIN || '*'
+    origin: process.env.CORS_ORIGIN || true // Allow all origins if CORS_ORIGIN is not set
   },
   supabase: {
     url: process.env.SUPABASE_URL,
@@ -30,7 +30,7 @@ const config = {
 };
 
 // Validate required environment variables
-const requiredEnvVars = [
+const requiredEnvVars = [ 
   'PORT',
   'NODE_ENV',
   'SUPABASE_URL',

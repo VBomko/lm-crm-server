@@ -7,6 +7,11 @@ This document provides comprehensive documentation for the Sales-Rep Availabilit
 1. [Overview](#overview)
 2. [Base URL](#base-url)
 3. [Authentication](#authentication)
+   - [Login](#login)
+   - [Refresh Token](#refresh-token)
+   - [Logout](#logout)
+   - [Verify Token](#verify-token)
+   - [Protected Routes](#protected-routes)
 4. [Events API](#events-api)
    - [Create Event](#create-event)
    - [Get All Events](#get-all-events)
@@ -20,11 +25,12 @@ This document provides comprehensive documentation for the Sales-Rep Availabilit
 6. [Data Models](#data-models)
    - [Event Model](#event-model)
    - [Availability Slot Model](#availability-slot-model)
+   - [User Model](#user-model)
 7. [Error Handling](#error-handling)
 
 ## Overview
 
-The API provides endpoints to manage events and retrieve sales representative availability slots. It uses Supabase as the database backend and follows RESTful principles.
+The API provides endpoints to manage events and retrieve sales representative availability slots. It uses Supabase as the database backend and follows RESTful principles. The API implements JWT-based authentication for secure access to protected endpoints.
 
 ## Base URL
 
@@ -34,7 +40,198 @@ The API provides endpoints to manage events and retrieve sales representative av
 
 ## Authentication
 
-Currently, all endpoints are publicly accessible. Authentication mechanisms may be implemented in future versions.
+The API uses JWT (JSON Web Token) based authentication with access and refresh tokens. Most endpoints require authentication via the `Authorization` header.
+
+### Authentication Flow
+
+1. **Login**: User provides email and password to receive access and refresh tokens
+2. **Access**: Use the access token in the `Authorization` header for API requests
+3. **Refresh**: When the access token expires, use the refresh token to get a new access token
+4. **Logout**: Invalidate the refresh token to log out
+
+### Token Types
+
+- **Access Token**: Short-lived (15 minutes) token for API access
+- **Refresh Token**: Long-lived (7 days) token for refreshing access tokens
+
+### Headers
+
+For authenticated requests, include the access token in the Authorization header:
+```
+Authorization: Bearer <access_token>
+```
+
+## Authentication API
+
+### Login
+
+Authenticates a user and returns access and refresh tokens.
+
+- **URL**: `/auth/login`
+- **Method**: `POST`
+- **Required Fields**:
+  - `email`: User's email address
+  - `password`: User's password
+
+**Request Body Example**:
+
+```json
+{
+  "email": "user@example.com",
+  "password": "userpassword"
+}
+```
+
+**Success Response**:
+
+- **Code**: 200 OK
+- **Content Example**:
+
+```json
+{
+  "success": true,
+  "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "expiresIn": 900,
+  "refreshTokenExpiresIn": 604800,
+  "user": {
+    "id": "12345",
+    "email": "user@example.com",
+    "firstName": "John",
+    "lastName": "Doe"
+  }
+}
+```
+
+**Error Responses**:
+
+- **Code**: 400 Bad Request
+  - **Content**: `{ "success": false, "error": "Email and password are required" }`
+- **Code**: 401 Unauthorized
+  - **Content**: `{ "success": false, "error": "Invalid email or password" }`
+  - **Content**: `{ "success": false, "error": "Your account is disabled. Please contact support." }`
+- **Code**: 500 Internal Server Error
+  - **Content**: `{ "success": false, "error": "Internal server error" }`
+
+### Refresh Token
+
+Refreshes an expired access token using a valid refresh token.
+
+- **URL**: `/auth/refresh`
+- **Method**: `POST`
+- **Authentication**: Refresh token (sent as HTTP-only cookie)
+
+**Success Response**:
+
+- **Code**: 200 OK
+- **Content Example**:
+
+```json
+{
+  "success": true,
+  "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "expiresIn": 900,
+  "refreshTokenExpiresIn": 604800
+}
+```
+
+**Error Responses**:
+
+- **Code**: 401 Unauthorized
+  - **Content**: `{ "success": false, "error": "Refresh token not found" }`
+  - **Content**: `{ "success": false, "error": "Invalid or expired refresh token" }`
+- **Code**: 500 Internal Server Error
+  - **Content**: `{ "success": false, "error": "Internal server error" }`
+
+### Logout
+
+Logs out the user by invalidating the refresh token.
+
+- **URL**: `/auth/logout`
+- **Method**: `POST`
+- **Authentication**: Refresh token (sent as HTTP-only cookie)
+
+**Success Response**:
+
+- **Code**: 200 OK
+- **Content Example**:
+
+```json
+{
+  "success": true,
+  "message": "Logged out successfully"
+}
+```
+
+**Error Response**:
+
+- **Code**: 500 Internal Server Error
+  - **Content**: `{ "success": false, "error": "Internal server error" }`
+
+### Verify Token
+
+Verifies the validity of an access token and returns user information.
+
+- **URL**: `/auth/verify`
+- **Method**: `GET`
+- **Authentication**: Access token in Authorization header
+
+**Success Response**:
+
+- **Code**: 200 OK
+- **Content Example**:
+
+```json
+{
+  "success": true,
+  "user": {
+    "userId": "12345",
+    "email": "user@example.com",
+    "firstName": "John",
+    "lastName": "Doe"
+  }
+}
+```
+
+**Error Responses**:
+
+- **Code**: 401 Unauthorized
+  - **Content**: `{ "success": false, "error": "Access token required" }`
+  - **Content**: `{ "success": false, "error": "Invalid or expired token" }`
+- **Code**: 500 Internal Server Error
+  - **Content**: `{ "success": false, "error": "Internal server error" }`
+
+### Protected Routes
+
+Example of a protected route that requires authentication:
+
+- **URL**: `/auth/protected/user`
+- **Method**: `GET`
+- **Authentication**: Access token in Authorization header
+
+**Success Response**:
+
+- **Code**: 200 OK
+- **Content Example**:
+
+```json
+{
+  "success": true,
+  "message": "Protected route accessed successfully",
+  "user": {
+    "userId": "12345",
+    "email": "user@example.com",
+    "firstName": "John",
+    "lastName": "Doe"
+  }
+}
+```
+
+**Error Response**:
+
+- **Code**: 401 Unauthorized
+  - **Content**: `{ "success": false, "error": "Access token required" }`
+  - **Content**: `{ "success": false, "error": "Invalid or expired token" }`
 
 ## Events API
 
@@ -572,6 +769,28 @@ Availability slots are calculated based on:
 
 For multi-day appointments, the system ensures that all affected time slots across the entire appointment duration are properly marked as unavailable, preventing double-booking.
 
+### User Model
+
+The User model represents authenticated users in the system.
+
+| Field                | Type        | Description                                                            |
+|----------------------|-------------|------------------------------------------------------------------------|
+| Id                   | UUID        | Unique identifier for the user                                         |
+| Email                | String      | User's email address (used for login)                                  |
+| First_Name           | String      | User's first name                                                      |
+| Last_Name            | String      | User's last name                                                       |
+| Password             | String      | Hashed password (bcrypt)                                               |
+| Can_Login            | Boolean     | Whether the user account is enabled for login                          |
+| Created_At           | TIMESTAMPTZ | When the user was created (auto-generated)                            |
+| Updated_At           | TIMESTAMPTZ | When the user was last updated (auto-generated)                       |
+
+**Authentication Features**:
+
+- **Password Hashing**: Passwords are automatically hashed using bcrypt when stored
+- **Account Status**: Users can be disabled by setting `Can_Login` to false
+- **Email Normalization**: Email addresses are automatically converted to lowercase for consistency
+- **Legacy Password Support**: The system supports both hashed and plain text passwords (with automatic migration to hashed)
+
 ## Error Handling
 
 The API uses standard HTTP status codes to indicate the success or failure of requests:
@@ -579,7 +798,63 @@ The API uses standard HTTP status codes to indicate the success or failure of re
 - **200 OK**: The request was successful
 - **201 Created**: The resource was successfully created
 - **400 Bad Request**: The request was malformed or missing required parameters
+- **401 Unauthorized**: Authentication required or invalid credentials/tokens
 - **404 Not Found**: The requested resource was not found
 - **500 Internal Server Error**: An error occurred on the server
 
-Error responses include a JSON object with an `error` field containing a description of the error.
+### Authentication Error Codes
+
+- **401 Unauthorized**: 
+  - Missing or invalid access token
+  - Expired access token
+  - Invalid refresh token
+  - Disabled user account
+  - Invalid email or password
+
+### Error Response Format
+
+Error responses include a JSON object with the following structure:
+
+```json
+{
+  "success": false,
+  "error": "Description of the error"
+}
+```
+
+For authentication errors, the response may also include additional context:
+
+```json
+{
+  "success": false,
+  "error": "Invalid or expired token",
+  "code": "TOKEN_EXPIRED"
+}
+```
+
+## Security Considerations
+
+### Environment Variables
+
+The authentication system requires the following environment variables:
+
+- `JWT_ACCESS_SECRET`: Secret key for signing access tokens (change in production)
+- `JWT_REFRESH_SECRET`: Secret key for signing refresh tokens (change in production)
+- `NODE_ENV`: Set to 'production' for secure cookie settings
+
+### Security Features
+
+- **HTTP-Only Cookies**: Refresh tokens are stored in HTTP-only cookies to prevent XSS attacks
+- **Secure Cookies**: In production, cookies are set with the `secure` flag for HTTPS-only transmission
+- **Token Expiration**: Access tokens expire after 15 minutes, refresh tokens after 7 days
+- **Password Hashing**: All passwords are hashed using bcrypt with salt
+- **Account Locking**: Users can be disabled by setting `Can_Login` to false
+- **CORS Protection**: Strict CORS settings prevent unauthorized cross-origin requests
+
+### Best Practices
+
+1. **Token Storage**: Store access tokens in memory or secure storage, never in localStorage
+2. **Token Refresh**: Implement automatic token refresh before expiration
+3. **Logout**: Always call logout endpoint to invalidate refresh tokens
+4. **HTTPS**: Use HTTPS in production to secure token transmission
+5. **Secret Rotation**: Regularly rotate JWT secrets in production environments
